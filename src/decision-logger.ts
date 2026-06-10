@@ -3,7 +3,20 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { DecisionLogEntry } from "./types.ts";
 
-const DEFAULT_DECISIONS_PATH = path.join(os.homedir(), ".pi", "agent", "extensions", "auto-router.decisions.jsonl");
+const DEFAULT_LOG_DIR = path.join(os.homedir(), ".pi", "agent", "extensions");
+
+function resolveLogDir(): string {
+	// Priority: env var > routes.json config > default
+	if (process.env.AUTO_ROUTER_LOG_DIR) return process.env.AUTO_ROUTER_LOG_DIR;
+	try {
+		const routesPath = path.join(os.homedir(), ".pi", "agent", "extensions", "auto-router.routes.json");
+		const routes = JSON.parse(fs.readFileSync(routesPath, "utf-8"));
+		if (routes.logDir && typeof routes.logDir === "string") return routes.logDir;
+	} catch { /* ignore */ }
+	return DEFAULT_LOG_DIR;
+}
+
+const DEFAULT_DECISIONS_PATH = path.join(resolveLogDir(), "auto-router.decisions.jsonl");
 
 /**
  * Append-only JSONL decision logger.
