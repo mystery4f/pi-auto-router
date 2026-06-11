@@ -2167,15 +2167,15 @@ export default function (pi: ExtensionAPI) {
           const atIdx = prefix.lastIndexOf("@");
           if (atIdx < 0) return current.getSuggestions(lines, cursorLine, cursorCol, options);
           const typed = prefix.slice(atIdx);
-          // If the @-prefix looks like a file path, delegate to file completion
-          if (/[@\\/.]/.test(typed.slice(1))) return current.getSuggestions(lines, cursorLine, cursorCol, options);
-          // Only handle @ followed by letters (shortcut names)
-          if (!/^@[a-z]*$/i.test(typed)) return current.getSuggestions(lines, cursorLine, cursorCol, options);
-          const items = listShortcuts()
+          // Get the current provider's suggestions (file paths, other plugins)
+          const existing = await current.getSuggestions(lines, cursorLine, cursorCol, options);
+          // Add our shortcut suggestions on top
+          const shortcutItems = listShortcuts()
             .filter((s) => s.shortcut.toLowerCase().startsWith(typed.toLowerCase()))
             .map((s) => ({ value: s.shortcut, label: s.shortcut, description: `${s.tier} — ${s.description}` }));
-          if (items.length > 0) return { items, prefix: typed };
-          return current.getSuggestions(lines, cursorLine, cursorCol, options);
+          if (shortcutItems.length === 0) return existing;
+          const merged = [...shortcutItems, ...(existing?.items ?? [])];
+          return { items: merged, prefix: existing?.prefix ?? typed };
         },
         applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
           // Only handle @shortcut completions; delegate everything else
