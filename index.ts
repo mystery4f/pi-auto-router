@@ -2178,6 +2178,8 @@ export default function (pi: ExtensionAPI) {
           return current.getSuggestions(lines, cursorLine, cursorCol, options);
         },
         applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+          // Only handle @shortcut completions; delegate everything else
+          if (!prefix.startsWith("@")) return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
           const line = lines[cursorLine] ?? "";
           const before = line.slice(0, cursorCol);
           const after = line.slice(cursorCol);
