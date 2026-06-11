@@ -571,6 +571,17 @@ function getPrimaryModelLimitsFn(route: RouteDefinition): { contextWindow: numbe
 }
 
 function isRetryableError(message: any): boolean {
+  // Allow external extensions to override error classification.
+  // Hook: (message) => boolean | undefined
+  //   true  = retryable,  false = not retryable,  undefined = delegate to built-in.
+  try {
+    const hook = (globalThis as any)?.__piAutoRouter_isRetryableError;
+    if (typeof hook === "function") {
+      const result = hook(message);
+      if (typeof result === "boolean") return result;
+    }
+  } catch { /* fall through */ }
+
   const text = String(message ?? "").toLowerCase();
   if (!text) return false;
   // NOTE: This only matches against actual error event strings (not model text output).
