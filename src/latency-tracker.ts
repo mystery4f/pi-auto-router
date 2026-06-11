@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { resolveLogDir } from "./paths.ts";
 import type { LatencyRecord } from "./types.ts";
 
-const STATS_PATH = path.join(resolveLogDir(), "auto-router.stats.json");
 const LATENCY_PATH = path.join(resolveLogDir(), "auto-router.latency.json");
 
 /**
