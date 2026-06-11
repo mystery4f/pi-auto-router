@@ -2161,20 +2161,21 @@ export default function (pi: ExtensionAPI) {
     if (!autocompleteRegistered && ctx.hasUI) {
       autocompleteRegistered = true;
       ctx.ui.addAutocompleteProvider((current) => ({
-        triggerCharacters: ["@"],
         async getSuggestions(lines, cursorLine, cursorCol, options) {
-          // Get the current token before cursor
           const line = lines[cursorLine] ?? "";
           const prefix = line.slice(0, cursorCol);
           const atIdx = prefix.lastIndexOf("@");
           if (atIdx < 0) return current.getSuggestions(lines, cursorLine, cursorCol, options);
           const typed = prefix.slice(atIdx);
-          // Only trigger for "@" followed by partial shortcut name (or just "@")
+          // If the @-prefix looks like a file path, delegate to file completion
+          if (/[@\\/.]/.test(typed.slice(1))) return current.getSuggestions(lines, cursorLine, cursorCol, options);
+          // Only handle @ followed by letters (shortcut names)
           if (!/^@[a-z]*$/i.test(typed)) return current.getSuggestions(lines, cursorLine, cursorCol, options);
           const items = listShortcuts()
             .filter((s) => s.shortcut.toLowerCase().startsWith(typed.toLowerCase()))
             .map((s) => ({ value: s.shortcut, label: s.shortcut, description: `${s.tier} — ${s.description}` }));
-          return items.length > 0 ? { items, prefix: typed } : null;
+          if (items.length > 0) return { items, prefix: typed };
+          return current.getSuggestions(lines, cursorLine, cursorCol, options);
         },
         applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
           const line = lines[cursorLine] ?? "";
