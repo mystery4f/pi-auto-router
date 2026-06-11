@@ -576,12 +576,12 @@ function isRetryableError(message: any): boolean {
   // NOTE: This only matches against actual error event strings (not model text output).
   // Be conservative with single-word tokens — they're prone to false positives.
   return [
-    "429", "rate limit", "ratelimit", "too many requests",
+    "429", "rate limit", "ratelimit", "rate_limit", "too many requests",
     "overloaded", "over capacity", "capacity reached", "busy",
     "temporarily unavailable", "timeout", "timed out", "econnreset", "etimedout",
     "network", "connection", "try again", "internal server error",
     "502", "503", "504", "500",
-    "quota", "quota will reset", "quota exceeded",
+    "quota", "quota will reset", "quota exceeded", "\u4f7f\u7528\u4e0a\u9650", "\u5df2\u8fbe\u5230",
     "hit your limit", "credits exhausted", "insufficient balance",
     "bad gateway", "service unavailable", "gateway timeout", "upstream",
     "no api key", "401",
