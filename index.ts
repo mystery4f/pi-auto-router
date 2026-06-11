@@ -2151,9 +2151,42 @@ export default function (pi: ExtensionAPI) {
     refreshStatus();
   };
 
+  let autocompleteRegistered = false;
+
   pi.on("session_start", async (_event, ctx) => {
     updateUi(ctx);
     triggerStartupUviRefresh();
+
+    // Register @ shortcut autocomplete — only once.
+    if (!autocompleteRegistered && ctx.hasUI) {
+      autocompleteRegistered = true;
+      ctx.ui.addAutocompleteProvider((current) => ({
+        triggerCharacters: ["@"],
+        async getSuggestions(lines, cursorLine, cursorCol, options) {
+          // Get the current token before cursor
+          const line = lines[cursorLine] ?? "";
+          const prefix = line.slice(0, cursorCol);
+          const atIdx = prefix.lastIndexOf("@");
+          if (atIdx < 0) return current.getSuggestions(lines, cursorLine, cursorCol, options);
+          const typed = prefix.slice(atIdx);
+          // Only trigger for "@" followed by partial shortcut name (or just "@")
+          if (!/^@[a-z]*$/i.test(typed)) return current.getSuggestions(lines, cursorLine, cursorCol, options);
+          const items = listShortcuts()
+            .filter((s) => s.shortcut.toLowerCase().startsWith(typed.toLowerCase()))
+            .map((s) => ({ value: s.shortcut, label: s.shortcut, description: `${s.tier} — ${s.description}` }));
+          return items.length > 0 ? { items, prefix: typed } : null;
+        },
+        applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+          const line = lines[cursorLine] ?? "";
+          const before = line.slice(0, cursorCol);
+          const after = line.slice(cursorCol);
+          const atIdx = before.lastIndexOf(prefix);
+          if (atIdx < 0) return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+          lines[cursorLine] = before.slice(0, atIdx) + item.value + " " + after;
+          return { lines, cursorLine, cursorCol: atIdx + item.value.length + 1 };
+        },
+      }));
+    }
   });
   pi.on("model_select", async (_event, ctx) => updateUi(ctx));
   pi.on("agent_start", async (_event, ctx) => updateUi(ctx));
