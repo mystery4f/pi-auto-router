@@ -45,11 +45,11 @@ export function solveConstraints(ctx: RoutingContext, options: SolveOptions = {}
       continue;
     }
     const caps = capabilities ? capabilities(target) ?? {} : {};
-    if (requirements.vision === true && caps.vision === false) {
+    if (requirements.vision === true && caps.vision !== true) {
       rejections.push({ target, reason: "lacks vision capability" });
       continue;
     }
-    if (requirements.reasoning === true && caps.reasoning === false) {
+    if (requirements.reasoning === true && caps.reasoning !== true) {
       rejections.push({ target, reason: "lacks reasoning capability" });
       continue;
     }

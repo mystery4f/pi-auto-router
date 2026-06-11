@@ -1115,7 +1115,27 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
 
       const userMsg = extractLastUserText(context);
       const match = userMsg ? parseShortcut(userMsg.text) : null;
-      if (match && userMsg) {
+
+      // When a @shortcut is used, try to route to the dedicated tier route
+      // (e.g. @vision → subscription-vision targets). Falls back to current
+      // route's targets if no matching route found.
+      let effectiveRouteId = routeId;
+      if (match && userMsg && userMsg.text) {
+        applyCleanedPrompt(context, userMsg, match.cleanedPrompt);
+        lastShortcutByRoute.set(routeId, { shortcut: match.shortcut, tier: match.tier });
+        const tierRouteMap: Record<string, string> = {
+          reasoning: "reasoning",
+          swe: "swe",
+          long: "long-context",
+          vision: "vision",
+          economy: "fast",
+        };
+        const targetSubstr = tierRouteMap[match.tier];
+        if (targetSubstr) {
+          const matched = Object.keys(routesCache).find((id) => id.includes(targetSubstr) && id !== routeId);
+          if (matched && routesCache[matched]) effectiveRouteId = matched;
+        }
+      } else if (match && userMsg) {
         applyCleanedPrompt(context, userMsg, match.cleanedPrompt);
         lastShortcutByRoute.set(routeId, { shortcut: match.shortcut, tier: match.tier });
       } else {
@@ -1125,10 +1145,10 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
       const promptText = match?.cleanedPrompt ?? userMsg?.text ?? "";
       const history = userMsg ? getRoutingMessages(context, userMsg.index) : [];
       const validationTrace = detectValidationTrace(history);
-      const routeTargets = routesCache[routeId]?.targets ?? [];
+      const routeTargets = routesCache[effectiveRouteId]?.targets ?? [];
       const previousDecisionForConversation = lastDecisionByConversation.get(conversationId) ?? null;
       const followUp = detectFollowUp(promptText, previousDecisionForConversation);
-      const healthy = getHealthyTargets(routeId);
+      const healthy = getHealthyTargets(effectiveRouteId);
 
       // Kick off background health checks for all candidate providers.
       // Non-blocking — results used next prompt or if already cached.
@@ -1193,7 +1213,7 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
         requirements,
         capabilities: (t) => lookupCapabilities(t, context),
         isOnCooldown: (t) => {
-          const c = cooldowns.get(getTargetKey(t, routeId));
+          const c = cooldowns.get(getTargetKey(t, effectiveRouteId));
           if (c && c.until > Date.now()) return true;
           // Circuit breaker: skip providers with an open circuit
           if (circuitBreaker.isOpen(t.provider)) return true;
@@ -1209,7 +1229,7 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
 
       // Sort within UVI buckets: latency → cost → config order.
       // When route.sortBy is "config", skip all sorting — targets stay in config order.
-      const routeSortBy = routesCache[routeId]?.sortBy;
+      const routeSortBy = routesCache[effectiveRouteId]?.sortBy;
       if (routeSortBy !== "config") {
         // Build a config-order index so we can break ties by priority (L1 before L8).
         const configIndex = new Map(ctx.availableTargets.map((t, i) => [getTargetKey(t), i]));
@@ -1291,7 +1311,7 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
       const legacyTargets = shadowMode
         ? healthy.filter((t) => {
             if (!getProviderHealthCache().isHealthy(t.provider, t.authProvider)) return false;
-            const c = cooldowns.get(getTargetKey(t, routeId));
+            const c = cooldowns.get(getTargetKey(t, effectiveRouteId));
             return !c || c.until <= Date.now();
           })
         : null;
@@ -1335,7 +1355,7 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
       }
 
       const reasoningParts: string[] = [];
-      if (match) reasoningParts.push(`shortcut ${match.shortcut} → tier=${match.tier}`);
+      if (match) reasoningParts.push(`shortcut ${match.shortcut} → tier=${match.tier}${effectiveRouteId !== routeId ? ` (route: ${routeId}→${effectiveRouteId})` : ""}`);
       if (followUp.isRepair) reasoningParts.push(`repair follow-up detected (${followUp.signals.join(", ")})`);
       else if (followUp.isFollowUp) reasoningParts.push(`follow-up detected (${followUp.signals.join(", ")})`);
       if (validationTrace.testOutcome) {
