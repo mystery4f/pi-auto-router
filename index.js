@@ -304,6 +304,7 @@ async function tryTarget(outer, outerModel, target, context, options) {
     };
     const inner = streamSimple(innerModel, context, { ...options, apiKey: token });
     let lastMessage;
+    try {
     for await (const event of inner) {
         if (event.type === "done") {
             lastMessage = event.message;
@@ -332,7 +333,9 @@ async function tryTarget(outer, outerModel, target, context, options) {
         }
         if (event.type === "error") {
             const message = event.error?.errorMessage || `${target.label || "Target"}: unknown error`;
-            if (!sawSubstantive && isRetryableError(message)) {
+            // External hook: allow extensions to force a skip.
+            const fastFail = globalThis.__piAutoRouter_onTargetError?.(target.provider, event.error, target);
+            if (!sawSubstantive && (fastFail === "skip" || isRetryableError(message))) {
                 putOnCooldown(target, message);
                 return { success: false, retryableFailure: `${target.label || "Target"}: ${message}` };
             }
@@ -365,10 +368,20 @@ async function tryTarget(outer, outerModel, target, context, options) {
                 flush();
         }
     }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const fastFail = globalThis.__piAutoRouter_onTargetError?.(target.provider, error instanceof Error ? error : message, target);
+        if (!sawSubstantive && (fastFail === "skip" || isRetryableError(message))) {
+            putOnCooldown(target, message);
+            return { success: false, retryableFailure: `${target.label || "Target"}: ${message}` };
+        }
+        throw error;
+    }
     lastAttemptByRoute.set(outerModel.id, target.label);
     if (lastMessage?.stopReason === "error" || lastMessage?.errorMessage) {
         const message = lastMessage.errorMessage || "Unknown terminal error";
-        if (!sawSubstantive && isRetryableError(message)) {
+        const fastFail = globalThis.__piAutoRouter_onTargetError?.(target.provider, lastMessage, target);
+        if (!sawSubstantive && (fastFail === "skip" || isRetryableError(message))) {
             putOnCooldown(target, message);
             return { success: false, retryableFailure: `${target.label || "Target"}: ${message}` };
         }
@@ -399,7 +412,19 @@ function streamAutoRouter(model, context, options) {
             }
             for (const target of targets) {
                 lastAttemptByRoute.set(routeId, target.label);
-                const result = await tryTarget(outer, model, target, context, options);
+                // Bridge-controlled hang guard: race against timer.
+                const hangTimeoutMs = globalThis.__piRouterBridge?.getTargetTimeoutMs?.(target.provider) ?? 0;
+                const result = hangTimeoutMs > 0
+                    ? await Promise.race([
+                        tryTarget(outer, model, target, context, options),
+                        new Promise((resolve) =>
+                            setTimeout(() => resolve({
+                                success: false,
+                                retryableFailure: `${target.label || "Target"}: request timeout`,
+                            }), hangTimeoutMs)
+                        ),
+                    ])
+                    : await tryTarget(outer, model, target, context, options);
                 if (result.success) {
                     activeTargetByRoute.delete(routeId);
                     refreshStatus(routeId);

@@ -702,6 +702,7 @@ async function tryTarget(
   // Forward the session cache key from pi-cache-optimizer so the underlying
   // provider can associate this request with the same cache prefix.
   const cacheKey = (globalThis as Record<string, unknown>).__piCacheOptimizerCacheKey__ as string | undefined;
+
   const innerOpts: Record<string, unknown> = { ...options, apiKey: token };
   if (cacheKey) innerOpts.prompt_cache_key = cacheKey;
   const inner = streamSimple(innerModel, sanitized, innerOpts as typeof options);
@@ -730,7 +731,10 @@ async function tryTarget(
 
       if (event.type === "error") {
         const message = event.error?.errorMessage || `${target.label || "Target"}: unknown error`;
-        if (!sawSubstantive && isRetryableError(message)) {
+        // External hook: allow extensions to inspect the raw error and force a skip.
+        // Return "skip" to treat as retryable failure (fall through to next target).
+        const fastFail = (globalThis as any).__piAutoRouter_onTargetError?.(target.provider, event.error, target);
+        if (!sawSubstantive && (fastFail === "skip" || isRetryableError(message))) {
           putOnCooldown(target, message, outerModel.id);
           return { success: false, retryableFailure: `${target.label || "Target"}: ${message}`, ttftMs };
         }
@@ -765,7 +769,8 @@ async function tryTarget(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!sawSubstantive && isRetryableError(message)) {
+    const fastFail = (globalThis as any).__piAutoRouter_onTargetError?.(target.provider, error instanceof Error ? error : message, target);
+    if (!sawSubstantive && (fastFail === "skip" || isRetryableError(message))) {
       putOnCooldown(target, message, outerModel.id);
       return { success: false, retryableFailure: `${target.label || "Target"}: ${message}`, ttftMs };
     }
@@ -776,7 +781,8 @@ async function tryTarget(
 
   if (lastMessage?.stopReason === "error" || lastMessage?.errorMessage) {
     const message = lastMessage.errorMessage || "Unknown terminal error";
-    if (!sawSubstantive && isRetryableError(message)) {
+    const fastFail = (globalThis as any).__piAutoRouter_onTargetError?.(target.provider, lastMessage, target);
+    if (!sawSubstantive && (fastFail === "skip" || isRetryableError(message))) {
       putOnCooldown(target, message, outerModel.id);
       return { success: false, retryableFailure: `${target.label || "Target"}: ${message}`, ttftMs };
     }
@@ -1544,7 +1550,21 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
           label: target.label,
         });
         const t0 = Date.now();
-        const result = await tryTarget(outer, model, target, context, options);
+        // Bridge-controlled hang guard: if router-bridge sets a timeout,
+        // race tryTarget against a timer. When the timer wins, treat as
+        // retryable failure and fall through to the next target.
+        const hangTimeoutMs = (globalThis as any).__piRouterBridge?.getTargetTimeoutMs?.(target.provider) ?? 0;
+        const result = hangTimeoutMs > 0
+          ? await Promise.race([
+              tryTarget(outer, model, target, context, options),
+              new Promise<Awaited<ReturnType<typeof tryTarget>>>((resolve) =>
+                setTimeout(() => resolve({
+                  success: false as const,
+                  retryableFailure: `${target.label || "Target"}: request timeout`,
+                }), hangTimeoutMs)
+              ),
+            ])
+          : await tryTarget(outer, model, target, context, options);
         if (result.success) {
           const elapsed = Date.now() - t0;
           const usageMetrics = extractUsageMetrics(result.lastMessage?.usage);
